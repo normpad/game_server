@@ -12,6 +12,7 @@ public class Server
 {
     static TcpListener server;
     static Dictionary<int, Client> clients;
+    static Mutex clientsMutex = new Mutex();
 
     static int maxClients = 100;
 
@@ -27,7 +28,7 @@ public class Server
             server = new TcpListener(bindAddress, port);
             server.Start();
         }
-        catch (SocketException err)
+        catch
         {
             Console.WriteLine("fuck");
             return "fuck";
@@ -47,6 +48,7 @@ public class Server
 
             //assign client ID
             byte id = 255;
+            clientsMutex.WaitOne();
             for (byte cid = 0; cid < maxClients; cid++)
             {
                 if(!clients.ContainsKey(cid))
@@ -55,6 +57,7 @@ public class Server
                     break;
                 }
             }
+            clientsMutex.ReleaseMutex();
 
             if (id != 255)
             {
@@ -63,11 +66,12 @@ public class Server
                 client.socket = incomingConnection;
                 client.position = new Vector3(0, 0, 0);
 
+                clientsMutex.WaitOne();
                 clients[id] = client;
+                clientsMutex.ReleaseMutex();
 
-                ClientData idData = new ClientData();
+                ClientData idData = new ClientData(PacketType.CLIENT_ID_UPDATE);
                 idData.clientNumber = id;
-                idData.dataType = PacketType.CLIENT_ID_UPDATE;
 
                 //Send the dude his number
                 client.socket.GetStream().Write(idData.raw, 0, ClientData.dataSize);
@@ -89,48 +93,115 @@ public class Server
         int bytesRead;
 
         // Loop to receive all the data sent by the client.
-        try
+        while (true)
         {
-            while (true)
+            //First read the incoming stuff
+            try
             {
-                //First read the incoming stuff
                 bytesRead = stream.Read(buffer, 0, buffer.Length);
-                ClientData data = new ClientData(buffer);
+            }
+            catch
+            {
+                //Console.WriteLine(e.ToString());
+                Console.WriteLine("Lost connection to client.");
 
-                if (data.dataType == PacketType.POSITION_UPDATE)
+                clientsMutex.WaitOne();
+                if (clients.ContainsKey(client.clientNumber))
                 {
-                    byte clientNum = data.clientNumber;
-                    Vector3 pos = new Vector3(data.x, data.y, data.z);
-                    clients[clientNum].position = pos;
+                    clients.Remove(client.clientNumber);
                 }
-                
-
-                //Then send data
-                foreach(var c in clients)
+                else
                 {
-                    //Only send data for clients that aren't this client
-                    if (c.Key != client.clientNumber)
+                    Console.WriteLine("error");
+                }
+                clientsMutex.ReleaseMutex();
+
+                // Shutdown and end connection
+                client.socket.Close();
+                return;
+            }
+
+            ClientData data = new ClientData(buffer);
+
+            if (data.dataType == PacketType.POSITION_UPDATE)
+            {
+                byte clientNum = data.clientNumber;
+                Vector3 pos = new Vector3(data.xPos, data.yPos, data.zPos);
+
+                clientsMutex.WaitOne();
+                clients[clientNum].position = pos;
+                clientsMutex.ReleaseMutex();
+            }
+            else if(data.dataType == PacketType.ROTATION_UPDATE)
+            {
+                byte clientNum = data.clientNumber;
+                Vector3 rot = new Vector3(data.xRot, data.yRot, data.zRot);
+
+                clientsMutex.WaitOne();
+                clients[clientNum].rotation = rot;
+                clientsMutex.ReleaseMutex();
+            }
+
+            //Then send data
+            clientsMutex.WaitOne();
+            foreach (var c in clients)
+            {
+                //Only send data for clients that aren't this client
+                if (c.Key != client.clientNumber)
+                {
+                    Client remoteClient = c.Value;
+
+                    //Set up the position data packets
+                    ClientData posData = new ClientData(PacketType.POSITION_UPDATE);
+                    posData.clientNumber = remoteClient.clientNumber;
+                    posData.xPos = remoteClient.position.X;
+                    posData.yPos = remoteClient.position.Y;
+                    posData.zPos = remoteClient.position.Z;
+
+                    //Set up the rotation data packets
+                    ClientData rotData = new ClientData(PacketType.ROTATION_UPDATE);
+                    rotData.clientNumber = remoteClient.clientNumber;
+                    rotData.xRot = remoteClient.rotation.X;
+                    rotData.yRot = remoteClient.rotation.Y;
+                    rotData.zRot = remoteClient.rotation.Z;
+
+                    try
                     {
-                        Client remoteClient = c.Value;
-                        ClientData sendData = new ClientData();
-                        sendData.clientNumber = remoteClient.clientNumber;
-                        sendData.dataType = PacketType.POSITION_UPDATE;
-                        sendData.x = remoteClient.position.X;
-                        sendData.y = remoteClient.position.Y;
-                        sendData.z = remoteClient.position.Z;
-                        buffer = sendData.raw;
+                        //set buffer to postion data
+                        buffer = posData.raw;
+
+                        //Send position
                         stream.Write(buffer);
+
+                        //set buffer to rotation data
+                        buffer = rotData.raw;
+
+                        //Send rotation
+                        stream.Write(buffer);
+                    }
+                    catch
+                    {
+                        //Console.WriteLine(e.ToString());
+                        Console.WriteLine("Lost connection to client.");
+
+                        if (clients.ContainsKey(client.clientNumber))
+                        {
+                            clients.Remove(client.clientNumber);
+                        }
+                        else
+                        {
+                            Console.WriteLine("error");
+                        }
+
+
+                        // Shutdown and end connection
+                        client.socket.Close();
+                        clientsMutex.ReleaseMutex();
+                        return;
                     }
                 }
             }
-        }
-        catch(Exception e)
-        {
-            Console.WriteLine(e.ToString());
-            Console.WriteLine("Lost connection to client.");
-
-            // Shutdown and end connection
-            client.socket.Close();
+            clientsMutex.ReleaseMutex();
         }
     }
 
@@ -138,13 +209,12 @@ public class Server
     {
         string host;
         int port = 80;
-        int numConnections = 0;
 
         if (args.Length < 2)
         {
             // If no server name is passed as argument to this program, 
             // use the current host name as the default.
-            host = "127.0.0.1";
+            host = "192.168.1.175";
             port = 12345;
         }
         else
@@ -164,12 +234,17 @@ public class Server
 
         while(true)
         {
-            if (numConnections < clients.Count)
+            clientsMutex.WaitOne();
+            foreach ( var client in clients)
             {
-                Thread t = new Thread(new ParameterizedThreadStart(HandleConnection));
-                t.Start(clients[numConnections]);
-                numConnections++;
+                if(!client.Value.threadStarted)
+                {
+                    Thread t = new Thread(new ParameterizedThreadStart(HandleConnection));
+                    t.Start(client.Value);
+                    client.Value.threadStarted = true;
+                }
             }
+            clientsMutex.ReleaseMutex();
         }
     }
 }

@@ -2,11 +2,14 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Numerics;
+using System.Runtime.InteropServices;
 
 public enum PacketType
 { 
     CLIENT_ID_UPDATE = 0,
-    POSITION_UPDATE = 1
+    POSITION_UPDATE  = 1,
+    ROTATION_UPDATE  = 2,
+    ANIMATION_UPDATE = 3
 }
 
 public class Client
@@ -16,16 +19,20 @@ public class Client
         clientNumber = 255;
         socket = null;
         position = new Vector3();
+        threadStarted = false;
     }
 
     public byte clientNumber { set; get; }
     public TcpClient socket { set; get; }
     public Vector3 position { set; get; }
+    public Vector3 rotation { set; get; }
+    public bool threadStarted { set; get; }
 }
 
 public class ClientData
 {
-    public static int dataSize = 14;   //Number of bytes of data, float(4B)x3=12
+    public static int dataSize = 32;   //32 bytes
+    public static int dataStartOffset = 2;  // Offset where data starts, index 0,1 are meta
 
     /*
      *  Initializes the data with default values
@@ -34,7 +41,18 @@ public class ClientData
     {
         raw = new byte[dataSize];
         positionArray = new float[3];
+        rotationArray = new float[3];
         clientNumber = 255;
+    }
+
+    public ClientData(PacketType pType)
+    {
+        raw = new byte[dataSize];
+        positionArray = new float[3];
+        rotationArray = new float[3];
+        clientNumber = 255;
+
+        dataType = pType;
     }
 
     /*
@@ -44,8 +62,13 @@ public class ClientData
     {
         raw = new byte[dataSize];
         positionArray = new float[3];
+        rotationArray = new float[3];
         clientNumber = 255;
+
+        //Copy the buffer into the raw data
         Buffer.BlockCopy(buffer, 0, raw, 0, dataSize);
+
+        //Deserialize the data
         deserialize();
     }
 
@@ -53,12 +76,11 @@ public class ClientData
     {
         get
         {
-            return clientNum;
+            return raw[0];
         }
         set
         {
-            clientNum = value;
-            serialize();
+            raw[0] = value;
         }
     }
 
@@ -66,19 +88,18 @@ public class ClientData
     {
         get
         {
-            return (PacketType)dataT;
+            return (PacketType)raw[1];
         }
         set
         {
-            dataT = (byte)value;
-            serialize();
+            raw[1] = (byte)value;
         }
     }
 
     /*
      * Player X position
      */
-    public float x
+    public float xPos
     {
         get 
         {
@@ -94,7 +115,7 @@ public class ClientData
     /*
      * Player Y position
      */
-    public float y
+    public float yPos
     {
         get 
         {
@@ -110,7 +131,7 @@ public class ClientData
     /*
      * Player Z position
      */
-    public float z
+    public float zPos
     {
         get 
         {
@@ -123,27 +144,73 @@ public class ClientData
         }
     }
 
-    private byte clientNum;
-    private byte dataT;
+    public float xRot
+    {
+        get
+        {
+            return rotationArray[0];
+        }
+        set
+        {
+            rotationArray[0] = value;
+            serialize();
+        }
+    }
+
+    public float yRot
+    {
+        get
+        {
+            return rotationArray[1];
+        }
+        set
+        {
+            rotationArray[1] = value;
+            serialize();
+        }
+    }
+
+    public float zRot
+    {
+        get
+        {
+            return rotationArray[2];
+        }
+        set
+        {
+            rotationArray[2] = value;
+            serialize();
+        }
+    }
 
     //Float array
     private float[] positionArray;
+    private float[] rotationArray;
 
     //Raw bytes
     public byte[] raw { get; set; }
 
     public void serialize()
     {
-        raw[0] = clientNumber;
-        raw[1] = dataT;
-        Buffer.BlockCopy(positionArray, 0, raw, 2, dataSize - 2);
+        if (dataType == PacketType.POSITION_UPDATE)
+        {
+            Buffer.BlockCopy(positionArray, 0, raw, dataStartOffset, 12);
+        }
+        else if (dataType == PacketType.ROTATION_UPDATE)
+        {
+            Buffer.BlockCopy(rotationArray, 0, raw, dataStartOffset, 12);
+        }
     }
 
     public void deserialize()
     {
-        clientNum = raw[0];
-        dataT = raw[1];
-        Buffer.BlockCopy(raw, 2, positionArray, 0, dataSize - 2);
+        if (dataType == PacketType.POSITION_UPDATE)
+        {
+            Buffer.BlockCopy(raw, dataStartOffset, positionArray, 0, 12);
+        }
+        else if (dataType == PacketType.ROTATION_UPDATE)
+        {
+            Buffer.BlockCopy(raw, dataStartOffset, rotationArray, 0, 12);
+        }
     }
-
 }
