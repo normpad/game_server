@@ -34,6 +34,7 @@ public class ClientData
     public static int dataSize = 32;   //32 bytes
     public static int dataStartOffset = 2;  // Offset where data starts, index 0,1 are meta
 
+    #region Constructors
     /*
      *  Initializes the data with default values
      */
@@ -71,7 +72,9 @@ public class ClientData
         //Deserialize the data
         deserialize();
     }
+    #endregion
 
+    #region Properties
     public byte clientNumber
     {
         get
@@ -183,13 +186,15 @@ public class ClientData
         }
     }
 
+    //Raw bytes
+    public byte[] raw { get; set; }
+    #endregion
+
     //Float array
     private float[] positionArray;
     private float[] rotationArray;
 
-    //Raw bytes
-    public byte[] raw { get; set; }
-
+    #region Methods
     public void serialize()
     {
         if (dataType == PacketType.POSITION_UPDATE)
@@ -213,4 +218,5 @@ public class ClientData
             Buffer.BlockCopy(raw, dataStartOffset, rotationArray, 0, 12);
         }
     }
+    #endregion
 }

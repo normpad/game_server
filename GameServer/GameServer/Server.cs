@@ -214,7 +214,7 @@ public class Server
         {
             // If no server name is passed as argument to this program, 
             // use the current host name as the default.
-            host = "192.168.1.175";
+            host = "127.0.0.1";
             port = 12345;
         }
         else
